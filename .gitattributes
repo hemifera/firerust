@@ -1,0 +1,15 @@
+# Ocultar Cargo.lock de los Diffs y estadísticas
+Cargo.lock -diff
+
+/target/ linguist-generated=true
+
+*.rs text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+/.gitignore text eol=lf
+/.gitattributes text eol=lf
+/LICENSE text eol=lf
