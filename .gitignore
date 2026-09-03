@@ -1,1 +1,4 @@
 firebrust/target/
+
+# Ignore lock files 
+.~*
