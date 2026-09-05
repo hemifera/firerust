@@ -1,3 +1,5 @@
+use log::{debug, info};
+
 const MAX_MODBUS_BYTES: usize = 256; // max bytes in a modbus frame
 const MINIMUM_MODBUS_BYTES: usize = 4; // min bytes in a modbus frame
 const COMMON_MODBUS_BYTES_LENGTH: usize = 8;
@@ -32,16 +34,16 @@ pub struct ProcessedTraces {
     pub function_name: String,
 
     // Unit 1
-    pub address_unit_1: Option<i16>,
-    pub quantity_unit_1: Option<i16>,
-    pub count_unit_1: Option<i16>,
+    pub address_unit_1: Option<i32>,
+    pub quantity_unit_1: Option<i32>,
+    pub count_unit_1: Option<i32>,
 
     // Register units
     pub register_units: RegisterUnits,
 
     // Unit 2
-    pub address_unit_2: Option<i16>,
-    pub quantity_unit_2: Option<i16>,
+    pub address_unit_2: Option<i32>,
+    pub quantity_unit_2: Option<i32>,
 
     // extras
     pub crc_calculated: u16,
@@ -97,7 +99,6 @@ impl RawTraces {
     pub fn process(&self) -> Option<ProcessedTraces> {
         // Valida que la traza modbus es apropiada y retorna una tupla con (validez, dirección del esclavo, código de función y crc calculado)
         let validation_result: ModbusInstruction = trace_validation(&self.traces)?;
-
         let traces_length = &self.traces.len();
 
         let mut initial_trace: Option<ProcessedTraces> = Some(ProcessedTraces {
@@ -117,12 +118,12 @@ impl RawTraces {
                 if let Some(initial_trace) = initial_trace.as_mut() {
                     // Asigna adress unit para los bits 2 y 3 del self.traces
                     initial_trace.address_unit_1 =
-                        bytes_to_u16(&self.traces[2..4]).map(|num: u16| num as i16);
+                        bytes_to_u16(&self.traces[2..4]).map(|num: u16| num as i32);
 
                     // Asigna quantity unit para los bit 4 y 5 excepto cuando el codigo de funcion es 6
                     if !validation_result.function_code.eq(&6) {
                         initial_trace.quantity_unit_1 =
-                            bytes_to_u16(&self.traces[4..6]).map(|num: u16| num as i16);
+                            bytes_to_u16(&self.traces[4..6]).map(|num: u16| num as i32);
                     }
 
                     match initial_trace.function_code {
@@ -149,7 +150,7 @@ impl RawTraces {
                             }
 
                             // MAX_WRITE_MULTIPLE_COILS_BYTES - 9
-                            let byte_count = self.traces[6] as i16;
+                            let byte_count = self.traces[6] as i32;
 
                             // Se asegure que el byte count cumpla con
                             // la cantidad de bytes por el tipo de instruccion
@@ -185,9 +186,19 @@ impl RawTraces {
                                 return None;
                             }
 
-                            let registers_count = self.traces[6] as i16;
+                            // Quantity of registers
+                            let registers_count =
+                                bytes_to_u16(&self.traces[4..6]).map(|num: u16| num as i32)?;
+                            // Byte Couunt
+                            let byte_count = self.traces[6] as i32;
 
-                            if *traces_length != 7 + (2 * registers_count as usize) + 2 {
+                            // Validacion de cantidad de registros con cantidad ee bytes
+                            if 2 * registers_count != byte_count {
+                                return None;
+                            }
+
+                            // Comprobacion de traza total
+                            if *traces_length != 7 + (byte_count as usize) + 2 {
                                 return None;
                             }
 
@@ -216,9 +227,10 @@ impl RawTraces {
                             let reg_units = calculate_register_units(slice_util);
 
                             initial_trace.register_units = reg_units;
+                            initial_trace.count_unit_1 = Some(byte_count);
+                            initial_trace.quantity_unit_1 = Some(registers_count);
                         }
                         23 => {
-                            // TODO!
                             if !(READ_WRITE_MULTIPLE_REGISTERS_MIN_BYTES as usize
                                 ..=(MAX_MODBUS_BYTES as usize))
                                 .contains(traces_length)
@@ -227,19 +239,19 @@ impl RawTraces {
                             }
 
                             if &initial_trace.quantity_unit_1?
-                                > &(READ_WRITE_MULTIPLE_REGISTERS_MAX_READ as i16)
+                                > &(READ_WRITE_MULTIPLE_REGISTERS_MAX_READ as i32)
                             {
                                 return None;
                             }
 
                             initial_trace.address_unit_2 =
-                                bytes_to_u16(&self.traces[6..8]).map(|num: u16| num as i16);
+                                bytes_to_u16(&self.traces[6..8]).map(|num: u16| num as i32);
 
                             // cantidad de registros a escribir
                             let write_quantity =
-                                bytes_to_u16(&self.traces[8..10]).map(|num: u16| num as i16)?;
+                                bytes_to_u16(&self.traces[8..10]).map(|num: u16| num as i32)?;
 
-                            let write_registers_count = self.traces[10] as i16;
+                            let write_registers_count = self.traces[10] as i32;
 
                             // Modbus specification: The byte count specifies the number of bytes to follow in the write data field.
                             if 2 * write_quantity != write_registers_count {
@@ -321,7 +333,7 @@ fn bytes_to_u16(bytes: &[u8]) -> Option<u16> {
     Some(u16::from_be_bytes(arreglo_fijo))
 }
 
-fn calculate_crc(data: &[u8]) -> u16 {
+pub fn calculate_crc(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
 
     for &byte in data {
@@ -367,12 +379,9 @@ fn calculate_register_units(vec: &mut [u16]) -> RegisterUnits {
     let mid = len / 2;
 
     let median = if len.is_multiple_of(2) {
-        // select_nth_unstable particiona el slice. Nos devuelve el segundo valor central
-        // y nos garantiza que todos los elementos en `left_half` son menores o iguales.
-        let (_, &mut mid2, left_half) = vec.select_nth_unstable(mid);
-
-        // El primer valor central es simplemente el máximo de la partición izquierda
-        let &mid1 = left_half.iter().max().unwrap();
+        // Se obtiene el valor centrao
+        let (left_half, &mut mid2, _) = vec.select_nth_unstable(mid);
+        let &mid1 = left_half.iter().max().unwrap_or(&0);
 
         (mid1 as u64 + mid2 as u64) / 2
     } else {
@@ -410,8 +419,6 @@ pub fn get_modbus_function_name(function_code: u8) -> &'static str {
         22 => "Mask Write Register",
         23 => "Read Write Multiple Registers",
         24 => "Read FIFO Queue",
-        // Aunque validaste el rango antes, Rust exige que el match cubra
-        // todos los valores posibles de un u8 (0 a 255)
         _ => "Unknown Function",
     }
 }
@@ -447,8 +454,9 @@ fn trace_validation(vec: &[u8]) -> Option<ModbusInstruction> {
     }
 
     // Validar que los últimos dos bytes sean un CRC válido
-    let crc_received = ((vec[vec.len() - 2] as u16) << 8) | (vec[vec.len() - 1] as u16);
+    let crc_received = u16::from_le_bytes([vec[&vec.len() - 2], vec[&vec.len() - 1]]);
     let crc_calculated = calculate_crc(&vec[..vec.len() - 2]);
+
     if crc_received != crc_calculated {
         return None;
     }

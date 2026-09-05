@@ -3,6 +3,11 @@ name = "firebrust"
 version = "0.1.0"
 edition = "2024"
 license-file = "LICENSE"
+publish = false
 
 [dependencies]
 chrono = "0.4.45"
+log = "0.4.34"
+
+[dev-dependencies]
+env_logger = "0.11"
