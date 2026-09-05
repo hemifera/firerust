@@ -10,7 +10,7 @@ const READ_WRITE_MULTIPLE_REGISTERS_MAX_READ: u8 = 121; // max read registers
 const READ_WRITE_MULTIPLE_REGISTERS_MAX_WRITE: u8 = 125; // max write registers
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RawTraces {
+pub struct RawTraces {
     pub traces: Vec<u8>,
 }
 
@@ -96,7 +96,7 @@ impl RawTraces {
     // Devuelve una traza modbus preparada para entranamiento
     // Se tiene tres estados, un None, y cuando es Some, se pueden tener datos con -1
     // indicando que no son relevantes
-    fn process(&self) -> Option<ProcessedTraces> {
+    pub fn process(&self) -> Option<ProcessedTraces> {
         // Valida que la traza modbus es apropiada y retorna una tupla con (validez, dirección del esclavo, código de función y crc calculado)
         let validation_result: ModbusInstruction = trace_validation(&self.traces)?;
 
@@ -143,7 +143,90 @@ impl RawTraces {
                                 zeros_count_register: Some(reg_unit.count_zeros() as i64),
                             }
                         }
-                        15 | 16 | 23 => {}
+                        15 => {
+                            if !(10..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
+                                .contains(traces_length)
+                            {
+                                return None;
+                            }
+
+                            // MAX_WRITE_MULTIPLE_COILS_BYTES - 9
+                            let byte_count = self.traces[6] as i16;
+
+                            // Se asegure que el byte count cumpla con
+                            // la cantidad de bytes por el tipo de instruccion
+                            // 7: bytes till byte count byte
+                            // N data bytes
+                            // 2 byte crc
+                            if *traces_length != 7 + (byte_count as usize) + 2 {
+                                return None;
+                            }
+
+                            initial_trace.count_unit_1 = Some(byte_count);
+
+                            let payload_u8 = &self.traces[7..traces_length - 2];
+                            // MAX_WRITE_MULTIPLE_COILS_BYTES - 9, se refiere a los bytes de
+                            // informacion menos el maximo de bytes de coils
+                            let mut static_buff =
+                                [0_u16; MAX_WRITE_MULTIPLE_COILS_BYTES as usize - 9];
+
+                            for (i, &byte) in payload_u8.iter().enumerate() {
+                                static_buff[i] = byte as u16;
+                            }
+
+                            let slice_util = &mut static_buff[..payload_u8.len()];
+                            // let converted_regs = vec_to_u16(&self.traces[7..traces_length-2])?;
+                            let reg_unit = calculate_register_units(slice_util);
+
+                            initial_trace.register_units = reg_unit;
+                        }
+                        16 => {
+                            if !(10..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
+                                .contains(traces_length)
+                            {
+                                return None;
+                            }
+
+                            let registers_count = self.traces[6] as i16;
+
+                            if *traces_length != 7 + (2 * registers_count as usize) + 2 {
+                                return None;
+                            }
+
+                            initial_trace.count_unit_1 = Some(registers_count);
+
+                            if !self.traces[7..traces_length - 2].len().is_multiple_of(2) {
+                                return None;
+                            }
+
+                            let payload = &self.traces[7..*traces_length - 2];
+                            let reg_len = payload.len() / 2;
+
+                            let mut static_buff = [0_u16; MAX_WRITE_MULTIPLE_REGISTERS as usize];
+
+                            if reg_len > static_buff.len() {
+                                return None;
+                            }
+
+                            for (i, par_bytes) in payload.chunks_exact(2).enumerate() {
+                                if let Some(valor) = bytes_to_u16(par_bytes) {
+                                    static_buff[i] = valor;
+                                }
+                            }
+
+                            let slice_util = &mut static_buff[..reg_len];
+                            let reg_units = calculate_register_units(slice_util);
+
+                            initial_trace.register_units = reg_units;
+                        }
+                        23 => {
+                            // TODO!
+                            if !(13..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
+                                .contains(traces_length)
+                            {
+                                return None;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -170,19 +253,11 @@ impl RawTraces {
 // Convierte un slice de bytes en un u16, si el slice tiene exactamente 2 bytes.
 // Retorna None si no es así.
 fn bytes_to_u16(bytes: &[u8]) -> Option<u16> {
-    if bytes.len() != 2 {
-        return None;
-    }
-    Some(((bytes[0] as u16) << 8) | (bytes[1] as u16))
-}
+    // Intenta convertir el slice de longitud variable en un arreglo fijo [u8; 2]
+    let arreglo_fijo: [u8; 2] = bytes.try_into().ok()?;
 
-// Convierte un slice de bytes en un vector de u16, si el slice tiene una longitud par.
-// Retorna None si no es así.
-fn vec_to_u16(vec: &[u8]) -> Option<Vec<u16>> {
-    if !vec.len().is_multiple_of(2) {
-        return None;
-    }
-    Some(vec.chunks(2).filter_map(bytes_to_u16).collect())
+    // from_be_bytes hace el bit-shift (Big Endian) de forma ultra optimizada
+    Some(u16::from_be_bytes(arreglo_fijo))
 }
 
 fn calculate_crc(data: &[u8]) -> u16 {
@@ -204,9 +279,9 @@ fn calculate_crc(data: &[u8]) -> u16 {
     crc
 }
 
-pub fn calculate_register_units(vec: &mut [u16]) -> (u64, u64, u64, u64, u64) {
+fn calculate_register_units(vec: &mut [u16]) -> RegisterUnits {
     if vec.is_empty() {
-        return (0, 0, 0, 0, 0);
+        return RegisterUnits::default();
     }
 
     // 1. Calcular min, max, suma y ceros en un solo recorrido (O(N))
@@ -245,7 +320,13 @@ pub fn calculate_register_units(vec: &mut [u16]) -> (u64, u64, u64, u64, u64) {
         mid_val as u64
     };
 
-    (min as u64, max as u64, median, sum, zeros_count)
+    RegisterUnits {
+        mininum_value_register: Some(min as i64),
+        maximum_value_register: Some(max as i64),
+        median_value_register: Some(median as i64),
+        total_value_register: Some(sum as i64),
+        zeros_count_register: Some(zeros_count as i64),
+    }
 }
 
 pub fn get_modbus_function_name(function_code: u8) -> &'static str {
