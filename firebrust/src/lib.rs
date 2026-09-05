@@ -1,13 +1,12 @@
-use chrono::prelude;
-
 const MAX_MODBUS_BYTES: usize = 256; // max bytes in a modbus frame
 const MINIMUM_MODBUS_BYTES: usize = 4; // min bytes in a modbus frame
 const COMMON_MODBUS_BYTES_LENGTH: usize = 8;
 
 const MAX_WRITE_MULTIPLE_COILS_BYTES: u8 = 246; // coils bytes
 const MAX_WRITE_MULTIPLE_REGISTERS: u8 = 125; // registers 
-const READ_WRITE_MULTIPLE_REGISTERS_MAX_READ: u8 = 121; // max read registers
-const READ_WRITE_MULTIPLE_REGISTERS_MAX_WRITE: u8 = 125; // max write registers
+const READ_WRITE_MULTIPLE_REGISTERS_MIN_BYTES: u8 = 13; // min instrucion registers
+const READ_WRITE_MULTIPLE_REGISTERS_MAX_READ: u8 = 125; // max read registers
+const READ_WRITE_MULTIPLE_REGISTERS_MAX_WRITE: u8 = 121; // max write registers
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RawTraces {
@@ -26,26 +25,26 @@ struct ModbusInstruction {
 
 // Derivations like debug, clone, copy, etc. are useful for testing and debugging
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ProcessedTraces {
+pub struct ProcessedTraces {
     // timestamp: u64,
-    slave_address: u8,
-    function_code: u8,
-    function_name: String,
+    pub slave_address: u8,
+    pub function_code: u8,
+    pub function_name: String,
 
     // Unit 1
-    address_unit_1: Option<i16>,
-    quantity_unit_1: Option<i16>,
-    count_unit_1: Option<i16>,
+    pub address_unit_1: Option<i16>,
+    pub quantity_unit_1: Option<i16>,
+    pub count_unit_1: Option<i16>,
 
     // Register units
-    register_units: RegisterUnits,
+    pub register_units: RegisterUnits,
 
     // Unit 2
-    address_unit_2: Option<i16>,
-    quantity_unit_2: Option<i16>,
+    pub address_unit_2: Option<i16>,
+    pub quantity_unit_2: Option<i16>,
 
     // extras
-    crc_calculated: u16,
+    pub crc_calculated: u16,
 }
 
 impl Default for ProcessedTraces {
@@ -70,12 +69,12 @@ impl Default for ProcessedTraces {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RegisterUnits {
-    mininum_value_register: Option<i64>,
-    maximum_value_register: Option<i64>,
-    median_value_register: Option<i64>,
-    total_value_register: Option<i64>,
-    zeros_count_register: Option<i64>,
+pub struct RegisterUnits {
+    pub mininum_value_register: Option<i64>,
+    pub maximum_value_register: Option<i64>,
+    pub median_value_register: Option<i64>,
+    pub total_value_register: Option<i64>,
+    pub zeros_count_register: Option<i64>,
 }
 
 impl Default for RegisterUnits {
@@ -90,8 +89,7 @@ impl Default for RegisterUnits {
     }
 }
 
-// RawTraces tiene una serie de funciones, y secuencias a cumplir
-// Iiciarlmente
+// RawTraces tiene la funcion process, que la prepara para un ProcessedTraces
 impl RawTraces {
     // Devuelve una traza modbus preparada para entranamiento
     // Se tiene tres estados, un None, y cuando es Some, se pueden tener datos con -1
@@ -221,11 +219,71 @@ impl RawTraces {
                         }
                         23 => {
                             // TODO!
-                            if !(13..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
+                            if !(READ_WRITE_MULTIPLE_REGISTERS_MIN_BYTES as usize
+                                ..=(MAX_MODBUS_BYTES as usize))
                                 .contains(traces_length)
                             {
                                 return None;
                             }
+
+                            if &initial_trace.quantity_unit_1?
+                                > &(READ_WRITE_MULTIPLE_REGISTERS_MAX_READ as i16)
+                            {
+                                return None;
+                            }
+
+                            initial_trace.address_unit_2 =
+                                bytes_to_u16(&self.traces[6..8]).map(|num: u16| num as i16);
+
+                            // cantidad de registros a escribir
+                            let write_quantity =
+                                bytes_to_u16(&self.traces[8..10]).map(|num: u16| num as i16)?;
+
+                            let write_registers_count = self.traces[10] as i16;
+
+                            // Modbus specification: The byte count specifies the number of bytes to follow in the write data field.
+                            if 2 * write_quantity != write_registers_count {
+                                return None;
+                            }
+
+                            // Se asegura que la longitud de la traza coincida con la cantidad minima de la traza
+                            // y la cantidad de registros indicados en Write Byte Count
+                            if *traces_length != 11 + (write_registers_count as usize) + 2 {
+                                return None;
+                            }
+
+                            // Se asegura que todos los registros pertenecientes a Write Registers Value sean pares
+                            if !self.traces[11..traces_length - 2].len().is_multiple_of(2) {
+                                return None;
+                            }
+
+                            // Se toma en todas las trazas pertenecientes a Write Registers Value,
+                            // se valida que la longitud de estos no se exceda y se concatenan en pares para formar u16
+
+                            let payload = &self.traces[11..*traces_length - 2];
+                            let reg_len = payload.len() / 2;
+
+                            let mut static_buff =
+                                [0_u16; READ_WRITE_MULTIPLE_REGISTERS_MAX_WRITE as usize];
+
+                            if reg_len > static_buff.len() {
+                                return None;
+                            }
+
+                            for (i, par_bytes) in payload.chunks_exact(2).enumerate() {
+                                if let Some(valor) = bytes_to_u16(par_bytes) {
+                                    static_buff[i] = valor;
+                                }
+                            }
+
+                            let slice_util = &mut static_buff[..reg_len];
+                            // se alimentan los u16 para obtener el register units
+                            let reg_units = calculate_register_units(slice_util);
+                            initial_trace.register_units = reg_units;
+
+                            // Se asignan los proximos campos
+                            initial_trace.count_unit_1 = Some(write_registers_count);
+                            initial_trace.quantity_unit_2 = Some(write_quantity);
                         }
                         _ => {}
                     }
@@ -233,12 +291,15 @@ impl RawTraces {
             }
 
             7 | 11 | 12 => {
+                // Utilizan la longitud de trazas minima,
+                // si es diferente hay informacion de mas y no es valida
                 if !traces_length.eq(&MINIMUM_MODBUS_BYTES) {
                     return None;
                 }
             }
 
             // Funciones a no filtrar
+            // No importa la longitud, son ignoradas
             8 | 17 | 20 | 21 | 22 | 24 => {}
 
             _ => {

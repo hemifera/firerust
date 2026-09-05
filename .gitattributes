@@ -1,7 +1,7 @@
 # Ocultar Cargo.lock de los Diffs y estadísticas
 Cargo.lock -diff
 
-/target/ linguist-generated=true
+firebrust/target/ linguist-generated=true
 
 *.rs text eol=lf
 *.toml text eol=lf
