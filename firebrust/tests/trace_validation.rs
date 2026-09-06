@@ -414,7 +414,7 @@ fn write_file_record() {
 }
 
 #[test]
-fn mask_write_record() {
+fn mask_write_register() {
     // 01 16 00 05 FF 00 00 0F 4A 16
 
     let traces: Vec<u8> = vec![0x01, 0x16, 0x00, 0x05, 0xFF, 0x00, 0x00, 0x0F, 0x4A, 0x16];
@@ -427,6 +427,99 @@ fn mask_write_record() {
             function_code: 0x16,
             function_name: get_modbus_function_name(0x16).into(),
             crc_calculated: 0x164A,
+            ..Default::default()
+        })
+    );
+}
+
+#[test]
+fn read_write_multiple_registers_01() {
+    // 01 16 00 05 FF 00 00 0F 4A 16
+
+    let traces: Vec<u8> = vec![
+        0x01, 0x17, 0x00, 0x0A, 0x00, 0x03, 0x00, 0xAB, 0x00, 0x02, 0x04, 0x00, 0xBB, 0x00, 0xCC,
+        0xB5, 0x26,
+    ];
+    let raw_trace = RawTraces { traces };
+
+    assert_eq!(
+        raw_trace.process(),
+        Some(ProcessedTraces {
+            slave_address: 1,
+            function_code: 0x17,
+            function_name: get_modbus_function_name(0x17).into(),
+            address_unit_1: Some(10),
+            quantity_unit_1: Some(3),
+            count_unit_1: Some(0x04),
+            register_units: RegisterUnits {
+                mininum_value_register: Some(0x00BB),
+                maximum_value_register: Some(0x00CC),
+                median_value_register: Some(195.5 as i64),
+                total_value_register: Some(0x00BB + 0x00CC),
+                zeros_count_register: Some(
+                    ((0x00BB as u16).count_zeros() + (0x00CC as u16).count_zeros()) as i64
+                )
+            },
+            address_unit_2: Some(0x00AB),
+            quantity_unit_2: Some(2),
+
+            crc_calculated: 0x26B5,
+        })
+    );
+}
+
+#[test]
+fn read_write_multiple_registers_02() {
+    // 01 16 00 05 FF 00 00 0F 4A 16
+
+    let traces: Vec<u8> = vec![
+        0x01, 0x17, 0x00, 0x0A, 0x00, 0x03, 0x00, 0xAB, 0x00, 0x03, 0x06, 0x00, 0xBB, 0x00, 0xCC,
+        0x00, 0xDD, 0xD5, 0x1F,
+    ];
+    let raw_trace = RawTraces { traces };
+
+    assert_eq!(
+        raw_trace.process(),
+        Some(ProcessedTraces {
+            slave_address: 1,
+            function_code: 0x17,
+            function_name: get_modbus_function_name(0x17).into(),
+            address_unit_1: Some(10),
+            quantity_unit_1: Some(3),
+            count_unit_1: Some(6),
+            register_units: RegisterUnits {
+                mininum_value_register: Some(0x00BB),
+                maximum_value_register: Some(0x00DD),
+                median_value_register: Some(0x00CC),
+                total_value_register: Some(0x00BB + 0x00CC + 0x00DD),
+                zeros_count_register: Some(
+                    ((0x00BB as u16).count_zeros()
+                        + (0x00CC as u16).count_zeros()
+                        + (0x00DD as u16).count_zeros()) as i64
+                )
+            },
+            address_unit_2: Some(0x00AB),
+            quantity_unit_2: Some(3),
+
+            crc_calculated: 0x1FD5,
+        })
+    );
+}
+
+#[test]
+fn read_fifo_queue() {
+    // 01 0B 04 0A
+
+    let traces: Vec<u8> = vec![0x01, 0x18, 0x04, 0xDE, 0x03, 0x47];
+    let raw_trace = RawTraces { traces };
+
+    assert_eq!(
+        raw_trace.process(),
+        Some(ProcessedTraces {
+            slave_address: 1,
+            function_code: 0x18,
+            function_name: get_modbus_function_name(0x18).into(),
+            crc_calculated: 0x4703,
             ..Default::default()
         })
     );
