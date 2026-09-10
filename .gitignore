@@ -1,4 +1,6 @@
 firebrust/target/
 
-# Ignore lock files 
+# Ignore lock files
 .~*
+
+.venv/

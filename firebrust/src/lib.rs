@@ -1,11 +1,13 @@
-use log::{debug, info};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
+use rayon::prelude::*;
 
 const MAX_MODBUS_BYTES: usize = 256; // max bytes in a modbus frame
 const MINIMUM_MODBUS_BYTES: usize = 4; // min bytes in a modbus frame
 const COMMON_MODBUS_BYTES_LENGTH: usize = 8;
 
 const MAX_WRITE_MULTIPLE_COILS_BYTES: u8 = 246; // coils bytes
-const MAX_WRITE_MULTIPLE_REGISTERS: u8 = 125; // registers 
+const MAX_WRITE_MULTIPLE_REGISTERS: u8 = 125; // registers
 const READ_WRITE_MULTIPLE_REGISTERS_MIN_BYTES: u8 = 13; // min instrucion registers
 const READ_WRITE_MULTIPLE_REGISTERS_MAX_READ: u8 = 125; // max read registers
 const READ_WRITE_MULTIPLE_REGISTERS_MAX_WRITE: u8 = 121; // max write registers
@@ -97,7 +99,8 @@ impl RawTraces {
     // Se tiene tres estados, un None, y cuando es Some, se pueden tener datos con -1
     // indicando que no son relevantes
     pub fn process(&self) -> Option<ProcessedTraces> {
-        // Valida que la traza modbus es apropiada y retorna una tupla con (validez, dirección del esclavo, código de función y crc calculado)
+        // Valida que la traza modbus es apropiada y retorna una tupla con (validez, dirección del esclavo,
+        // código de función y crc calculado)
         let validation_result: ModbusInstruction = trace_validation(&self.traces)?;
         let traces_length = &self.traces.len();
 
@@ -143,9 +146,7 @@ impl RawTraces {
                             }
                         }
                         15 => {
-                            if !(10..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
-                                .contains(traces_length)
-                            {
+                            if !(10..=(MAX_MODBUS_BYTES as usize)).contains(traces_length) {
                                 return None;
                             }
 
@@ -180,9 +181,7 @@ impl RawTraces {
                             initial_trace.register_units = reg_unit;
                         }
                         16 => {
-                            if !(10..=(MAX_WRITE_MULTIPLE_COILS_BYTES as usize))
-                                .contains(traces_length)
-                            {
+                            if !(10..=(MAX_MODBUS_BYTES as usize)).contains(traces_length) {
                                 return None;
                             }
 
@@ -303,7 +302,7 @@ impl RawTraces {
             }
 
             7 | 11 | 12 => {
-                // Utilizan la longitud de trazas minima,
+                // Utilizan la longitud de trazas minima
                 // si es diferente hay informacion de mas y no es valida
                 if !traces_length.eq(&MINIMUM_MODBUS_BYTES) {
                     return None;
@@ -466,4 +465,146 @@ fn trace_validation(vec: &[u8]) -> Option<ModbusInstruction> {
         function_code,
         crc: crc_calculated,
     })
+}
+
+#[pyfunction]
+#[pyo3(name = "process_single_trace")]
+pub fn process_trace_for_python<'py>(
+    py: Python<'py>,
+    raw_bytes: &[u8],
+) -> PyResult<Option<Bound<'py, PyDict>>> {
+    let raw = RawTraces {
+        traces: raw_bytes.to_vec(),
+    };
+
+    match raw.process() {
+        Some(processed_trace) => {
+            let dict = PyDict::new(py);
+
+            dict.set_item("slave_address", processed_trace.slave_address)?;
+            dict.set_item("function_code", processed_trace.function_code)?;
+            dict.set_item("function_name", processed_trace.function_name)?;
+
+            dict.set_item("address_unit_1", processed_trace.address_unit_1)?;
+            dict.set_item("quantity_unit_1", processed_trace.quantity_unit_1)?;
+            dict.set_item("count_unit_1", processed_trace.count_unit_1)?;
+
+            dict.set_item(
+                "mininum_value_register",
+                processed_trace.register_units.mininum_value_register,
+            )?;
+            dict.set_item(
+                "maximum_value_register",
+                processed_trace.register_units.maximum_value_register,
+            )?;
+            dict.set_item(
+                "median_value_register",
+                processed_trace.register_units.median_value_register,
+            )?;
+            dict.set_item(
+                "total_value_register",
+                processed_trace.register_units.total_value_register,
+            )?;
+            dict.set_item(
+                "zeros_count_register",
+                processed_trace.register_units.zeros_count_register,
+            )?;
+
+            dict.set_item("address_unit_2", processed_trace.address_unit_2)?;
+            dict.set_item("quantity_unit_2", processed_trace.quantity_unit_2)?;
+
+            dict.set_item("crc_calculated", processed_trace.crc_calculated)?;
+
+            Ok(Some(dict))
+        }
+        None => Ok(None),
+    }
+}
+
+#[pymodule]
+fn my_rust_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(process_trace_for_python, m)?)?;
+    m.add_function(wrap_pyfunction!(process_batch_traces, m)?)?;
+    Ok(())
+}
+
+#[pyfunction]
+#[pyo3(name = "process_batch_traces")]
+pub fn process_batch_traces<'py>(
+    py: Python<'py>,
+    timestamps: Vec<String>,
+    hex_strings: Vec<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let processed_results: Vec<Option<(String, ProcessedTraces)>> = timestamps
+        .into_par_iter()
+        .zip(hex_strings.into_par_iter())
+        .map(|(ts, hex_str)| {
+            let cleaned: String = hex_str.chars().filter(|c| !c.is_whitespace()).collect();
+            match hex::decode(cleaned) {
+                Ok(bytes) => {
+                    let raw = RawTraces { traces: bytes };
+                    raw.process().map(|pt| (ts, pt))
+                }
+                Err(_) => None,
+            }
+        })
+        .collect();
+
+    let dict = PyDict::new(py);
+    let timestamp_out = PyList::empty(py);
+    let slave_address = PyList::empty(py);
+    let function_code = PyList::empty(py);
+    let function_name = PyList::empty(py);
+    let address_unit_1 = PyList::empty(py);
+    let quantity_unit_1 = PyList::empty(py);
+    let count_unit_1 = PyList::empty(py);
+    let mininum_value_register = PyList::empty(py);
+    let maximum_value_register = PyList::empty(py);
+    let median_value_register = PyList::empty(py);
+    let total_value_register = PyList::empty(py);
+    let zeros_count_register = PyList::empty(py);
+    let address_unit_2 = PyList::empty(py);
+    let quantity_unit_2 = PyList::empty(py);
+    let crc_calculated = PyList::empty(py);
+
+    for result in processed_results.into_iter().flatten() {
+        let (ts, trace) = result;
+
+        timestamp_out.append(ts)?;
+        slave_address.append(trace.slave_address)?;
+        function_code.append(trace.function_code)?;
+        function_name.append(trace.function_name)?;
+
+        address_unit_1.append(trace.address_unit_1)?;
+        quantity_unit_1.append(trace.quantity_unit_1)?;
+        count_unit_1.append(trace.count_unit_1)?; // ¡Línea faltante agregada!
+
+        mininum_value_register.append(trace.register_units.mininum_value_register)?;
+        maximum_value_register.append(trace.register_units.maximum_value_register)?;
+        median_value_register.append(trace.register_units.median_value_register)?;
+        total_value_register.append(trace.register_units.total_value_register)?;
+        zeros_count_register.append(trace.register_units.zeros_count_register)?;
+
+        address_unit_2.append(trace.address_unit_2)?;
+        quantity_unit_2.append(trace.quantity_unit_2)?;
+        crc_calculated.append(trace.crc_calculated)?;
+    }
+
+    dict.set_item("timestamp", timestamp_out)?;
+    dict.set_item("slave_address", slave_address)?;
+    dict.set_item("function_code", function_code)?;
+    dict.set_item("function_name", function_name)?;
+    dict.set_item("address_unit_1", address_unit_1)?;
+    dict.set_item("quantity_unit_1", quantity_unit_1)?;
+    dict.set_item("count_unit_1", count_unit_1)?;
+    dict.set_item("mininum_value_register", mininum_value_register)?;
+    dict.set_item("maximum_value_register", maximum_value_register)?;
+    dict.set_item("median_value_register", median_value_register)?;
+    dict.set_item("total_value_register", total_value_register)?;
+    dict.set_item("zeros_count_register", zeros_count_register)?;
+    dict.set_item("address_unit_2", address_unit_2)?;
+    dict.set_item("quantity_unit_2", quantity_unit_2)?;
+    dict.set_item("crc_calculated", crc_calculated)?;
+
+    Ok(dict)
 }

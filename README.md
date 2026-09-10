@@ -7,3 +7,8 @@ Actualmente, firebrust/ posee las funciones necesarias para procesar las tramas,
 
 Posteriormente se llamaran los archivos necesarios en un proyecto de python que usar jupyter notebooks,
 debido a la necesidad del funcionamiento de la PYNQ
+
+Estado:
+- Actualizacion de firebrust a version 0.2.0
+- Libreria modbus de rust esta finalizada. (cuestionable)
+- Librerias llamables por python: se ha utilizado uv y maturin para gestionar los paquetes y se han implementado dos, una para una sola traza y otra para un arreglo de multiples trazas.
