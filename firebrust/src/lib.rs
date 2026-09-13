@@ -76,9 +76,36 @@ impl Default for ProcessedTraces {
 pub struct RegisterUnits {
     pub mininum_value_register: Option<i64>,
     pub maximum_value_register: Option<i64>,
+    pub mean_value_register: Option<i64>,
+    // Trimmed mean
+    pub tmean_value_register: Option<i64>,
     pub median_value_register: Option<i64>,
+    pub std_value_register: Option<i64>,
     pub total_value_register: Option<i64>,
     pub zeros_count_register: Option<i64>,
+
+    // Quartiles
+    pub q1_value_register: Option<i64>,
+    pub q3_value_register: Option<i64>,
+    pub iqr_value_register: Option<i64>,
+    // median absolute deviation
+    pub mad_value_register: Option<i64>,
+    // shanon entropy
+    pub entropy_value_register: Option<i64>,
+
+    pub mode_value_register: Option<i64>,
+    pub mode_freq_value_register: Option<i64>,
+
+    pub skewness_value_register: Option<i64>,
+    pub kurtosis_value_register: Option<i64>,
+
+    // pub normalized_histogram_value_register: Option<i64>,
+
+    // Absolute Diferences | x_i+1 - x_i ... |
+    pub max_diff_value_register: Option<i64>,
+    pub avg_diff_value_register: Option<i64>,
+    pub median_diff_value_register: Option<i64>,
+    pub mad_diff_value_register: Option<i64>,
 }
 
 impl Default for RegisterUnits {
@@ -86,9 +113,30 @@ impl Default for RegisterUnits {
         Self {
             mininum_value_register: Some(-1),
             maximum_value_register: Some(-1),
+            mean_value_register: Some(-1),
+            tmean_value_register: Some(-1),
             median_value_register: Some(-1),
+            std_value_register: Some(-1),
             total_value_register: Some(-1),
             zeros_count_register: Some(-1),
+
+            q1_value_register: Some(-1),
+            q3_value_register: Some(-1),
+            iqr_value_register: Some(-1),
+            mad_value_register: Some(-1),
+            entropy_value_register: Some(-1),
+
+            mode_value_register: Some(-1),
+            mode_freq_value_register: Some(-1),
+
+            skewness_value_register: Some(-1),
+            kurtosis_value_register: Some(-1),
+
+            // normalized_histogram_value_register: Some(-1),
+            max_diff_value_register: Some(-1),
+            avg_diff_value_register: Some(-1),
+            median_diff_value_register: Some(-1),
+            mad_diff_value_register: Some(-1),
         }
     }
 }
@@ -135,18 +183,12 @@ impl RawTraces {
                                 return None;
                             }
 
-                            let reg_unit = bytes_to_u16(&self.traces[4..6])?;
+                            let quantity_unit = bytes_to_u16(&self.traces[4..6])?;
 
-                            initial_trace.register_units = RegisterUnits {
-                                mininum_value_register: Some(reg_unit as i64),
-                                maximum_value_register: Some(reg_unit as i64),
-                                median_value_register: Some(reg_unit as i64),
-                                total_value_register: Some(reg_unit as i64),
-                                zeros_count_register: Some(reg_unit.count_zeros() as i64),
-                            }
+                            initial_trace.quantity_unit_1 = Some(quantity_unit as i32);
                         }
                         15 => {
-                            if !(10..=(MAX_MODBUS_BYTES as usize)).contains(traces_length) {
+                            if !(10..=MAX_MODBUS_BYTES).contains(traces_length) {
                                 return None;
                             }
 
@@ -181,7 +223,7 @@ impl RawTraces {
                             initial_trace.register_units = reg_unit;
                         }
                         16 => {
-                            if !(10..=(MAX_MODBUS_BYTES as usize)).contains(traces_length) {
+                            if !(10..=MAX_MODBUS_BYTES).contains(traces_length) {
                                 return None;
                             }
 
@@ -216,7 +258,7 @@ impl RawTraces {
                                 return None;
                             }
 
-                            for (i, par_bytes) in payload.chunks_exact(2).enumerate() {
+                            for (i, par_bytes) in payload.as_chunks::<2>().0.iter().enumerate() {
                                 if let Some(valor) = bytes_to_u16(par_bytes) {
                                     static_buff[i] = valor;
                                 }
@@ -231,14 +273,14 @@ impl RawTraces {
                         }
                         23 => {
                             if !(READ_WRITE_MULTIPLE_REGISTERS_MIN_BYTES as usize
-                                ..=(MAX_MODBUS_BYTES as usize))
+                                ..=MAX_MODBUS_BYTES)
                                 .contains(traces_length)
                             {
                                 return None;
                             }
 
-                            if &initial_trace.quantity_unit_1?
-                                > &(READ_WRITE_MULTIPLE_REGISTERS_MAX_READ as i32)
+                            if initial_trace.quantity_unit_1?
+                                > (READ_WRITE_MULTIPLE_REGISTERS_MAX_READ as i32)
                             {
                                 return None;
                             }
@@ -281,7 +323,7 @@ impl RawTraces {
                                 return None;
                             }
 
-                            for (i, par_bytes) in payload.chunks_exact(2).enumerate() {
+                            for (i, par_bytes) in payload.as_chunks::<2>().0.iter().enumerate() {
                                 if let Some(valor) = bytes_to_u16(par_bytes) {
                                     static_buff[i] = valor;
                                 }
@@ -351,53 +393,180 @@ pub fn calculate_crc(data: &[u8]) -> u16 {
     crc
 }
 
-fn calculate_register_units(vec: &mut [u16]) -> RegisterUnits {
+pub fn calculate_register_units(vec: &mut [u16]) -> RegisterUnits {
     if vec.is_empty() {
         return RegisterUnits::default();
     }
 
-    // 1. Calcular min, max, suma y ceros en un solo recorrido (O(N))
-    let mut min = vec[0];
-    let mut max = vec[0];
-    let mut sum: u64 = 0;
-    let mut zeros_count: u64 = 0;
+    let (max_diff, avg_diff, med_diff, mad_diff) = calculate_diff_stats(vec);
 
-    for &num in vec.iter() {
-        if num < min {
-            min = num;
+    vec.sort_unstable();
+
+    let len = vec.len();
+    let min = vec[0] as i64;
+    let max = vec[len - 1] as i64;
+
+    let mut sum: i64 = 0;
+    let mut zeros: i64 = 0;
+    for &val in vec.iter() {
+        sum += val as i64;
+        if val == 0 {
+            zeros += 1;
         }
-        if num > max {
-            max = num;
-        }
-        sum += num as u64;
-        zeros_count += num.count_zeros() as u64;
     }
 
-    // 2. Calcular la mediana in-place con Quickselect (0 memoria extra)
-    let len = vec.len();
-    let mid = len / 2;
+    let mean = sum / len as i64;
+    let median = vec[len / 2] as i64;
+    let q1 = vec[len / 4] as i64;
+    let q3 = vec[(len * 3) / 4] as i64;
+    let iqr = q3 - q1;
 
-    let median = if len.is_multiple_of(2) {
-        // Se obtiene el valor centrao
-        let (left_half, &mut mid2, _) = vec.select_nth_unstable(mid);
-        let &mid1 = left_half.iter().max().unwrap_or(&0);
-
-        (mid1 as u64 + mid2 as u64) / 2
-    } else {
-        // Para longitud impar, solo extraemos el centro directo
-        let (_, &mut mid_val, _) = vec.select_nth_unstable(mid);
-        mid_val as u64
-    };
+    let (mode, mode_freq) = calculate_mode(vec);
+    let mad = calculate_mad(vec, median);
+    let tmean = calculate_trimmed_mean(vec, len);
+    let (std, skewness, kurtosis) = calculate_moments(vec, mean as f64);
+    let entropy = calculate_entropy(vec);
 
     RegisterUnits {
-        mininum_value_register: Some(min as i64),
-        maximum_value_register: Some(max as i64),
-        median_value_register: Some(median as i64),
-        total_value_register: Some(sum as i64),
-        zeros_count_register: Some(zeros_count as i64),
+        mininum_value_register: Some(min),
+        maximum_value_register: Some(max),
+        mean_value_register: Some(mean),
+        tmean_value_register: Some(tmean),
+        median_value_register: Some(median),
+        std_value_register: Some(std),
+        total_value_register: Some(sum),
+        zeros_count_register: Some(zeros),
+        q1_value_register: Some(q1),
+        q3_value_register: Some(q3),
+        iqr_value_register: Some(iqr),
+        mad_value_register: Some(mad),
+        entropy_value_register: Some(entropy),
+        mode_value_register: Some(mode),
+        mode_freq_value_register: Some(mode_freq),
+        skewness_value_register: Some(skewness),
+        kurtosis_value_register: Some(kurtosis),
+        // normalized_histogram_value_register: Some(0), // Requiere definir lógica de bins
+        max_diff_value_register: max_diff,
+        avg_diff_value_register: avg_diff,
+        median_diff_value_register: med_diff,
+        mad_diff_value_register: mad_diff,
     }
 }
 
+fn calculate_diff_stats(vec: &[u16]) -> (Option<i64>, Option<i64>, Option<i64>, Option<i64>) {
+    if vec.len() < 2 {
+        return (None, None, None, None);
+    }
+
+    let mut diffs: Vec<i64> = vec
+        .windows(2)
+        .map(|w| (w[1] as i64 - w[0] as i64).abs())
+        .collect();
+
+    let sum: i64 = diffs.iter().sum();
+    let avg = sum / diffs.len() as i64;
+    let max = *diffs.iter().max().unwrap_or(&0);
+
+    diffs.sort_unstable();
+    let median = diffs[diffs.len() / 2];
+
+    let mut mad_diffs: Vec<i64> = diffs.iter().map(|&x| (x - median).abs()).collect();
+    mad_diffs.sort_unstable();
+    let mad = mad_diffs[mad_diffs.len() / 2];
+
+    (Some(max), Some(avg), Some(median), Some(mad))
+}
+
+fn calculate_mode(vec: &[u16]) -> (i64, i64) {
+    let mut max_count = 0;
+    let mut mode = vec[0];
+    let mut current_count = 1;
+
+    for i in 1..vec.len() {
+        if vec[i] == vec[i - 1] {
+            current_count += 1;
+        } else {
+            if current_count > max_count {
+                max_count = current_count;
+                mode = vec[i - 1];
+            }
+            current_count = 1;
+        }
+    }
+    if current_count > max_count {
+        mode = vec[vec.len() - 1];
+        max_count = current_count;
+    }
+
+    (mode as i64, max_count as i64)
+}
+
+fn calculate_mad(vec: &[u16], median: i64) -> i64 {
+    let mut deviations: Vec<i64> = vec.iter().map(|&x| (x as i64 - median).abs()).collect();
+    deviations.sort_unstable();
+    deviations[deviations.len() / 2]
+}
+
+fn calculate_trimmed_mean(vec: &[u16], len: usize) -> i64 {
+    let trim_count = len / 10; // 10% trim en cada extremo
+    if trim_count * 2 >= len {
+        return vec[len / 2] as i64;
+    }
+
+    let trimmed = &vec[trim_count..(len - trim_count)];
+    let sum: i64 = trimmed.iter().map(|&x| x as i64).sum();
+    sum / trimmed.len() as i64
+}
+
+fn calculate_moments(vec: &[u16], mean: f64) -> (i64, i64, i64) {
+    let len = vec.len() as f64;
+    let mut var_sum = 0.0;
+    let mut skew_sum = 0.0;
+    let mut kurt_sum = 0.0;
+
+    for &val in vec {
+        let diff = val as f64 - mean;
+        var_sum += diff.powi(2);
+        skew_sum += diff.powi(3);
+        kurt_sum += diff.powi(4);
+    }
+
+    let variance = var_sum / len;
+    let std = variance.sqrt();
+
+    let skewness = if std > 0.0 {
+        skew_sum / (len * std.powi(3))
+    } else {
+        0.0
+    };
+    let kurtosis = if std > 0.0 {
+        kurt_sum / (len * std.powi(4))
+    } else {
+        0.0
+    };
+
+    (std as i64, skewness as i64, kurtosis as i64)
+}
+
+fn calculate_entropy(vec: &[u16]) -> i64 {
+    let len = vec.len() as f64;
+    let mut entropy = 0.0;
+
+    let mut current_count = 1;
+    for i in 1..vec.len() {
+        if vec[i] == vec[i - 1] {
+            current_count += 1;
+        } else {
+            let p = current_count as f64 / len;
+            entropy -= p * p.log2();
+            current_count = 1;
+        }
+    }
+    let p = current_count as f64 / len;
+    entropy -= p * p.log2();
+
+    (entropy * 1000.0) as i64 // Escalado para conservar decimales en i64
+}
 pub fn get_modbus_function_name(function_code: u8) -> &'static str {
     match function_code {
         1 => "Read Coils",
@@ -498,8 +667,20 @@ pub fn process_trace_for_python<'py>(
                 processed_trace.register_units.maximum_value_register,
             )?;
             dict.set_item(
+                "mean_value_register",
+                processed_trace.register_units.mean_value_register,
+            )?;
+            dict.set_item(
+                "tmean_value_register",
+                processed_trace.register_units.tmean_value_register,
+            )?;
+            dict.set_item(
                 "median_value_register",
                 processed_trace.register_units.median_value_register,
+            )?;
+            dict.set_item(
+                "std_value_register",
+                processed_trace.register_units.std_value_register,
             )?;
             dict.set_item(
                 "total_value_register",
@@ -508,6 +689,62 @@ pub fn process_trace_for_python<'py>(
             dict.set_item(
                 "zeros_count_register",
                 processed_trace.register_units.zeros_count_register,
+            )?;
+            dict.set_item(
+                "q1_value_register",
+                processed_trace.register_units.q1_value_register,
+            )?;
+            dict.set_item(
+                "q3_value_register",
+                processed_trace.register_units.q3_value_register,
+            )?;
+            dict.set_item(
+                "iqr_value_register",
+                processed_trace.register_units.iqr_value_register,
+            )?;
+            dict.set_item(
+                "mad_value_register",
+                processed_trace.register_units.mad_value_register,
+            )?;
+            dict.set_item(
+                "entropy_value_register",
+                processed_trace.register_units.entropy_value_register,
+            )?;
+
+            dict.set_item(
+                "mode_value_register",
+                processed_trace.register_units.mode_value_register,
+            )?;
+            dict.set_item(
+                "mode_freq_value_register",
+                processed_trace.register_units.mode_freq_value_register,
+            )?;
+
+            dict.set_item(
+                "skewness_value_register",
+                processed_trace.register_units.skewness_value_register,
+            )?;
+            dict.set_item(
+                "kurtosis_value_register",
+                processed_trace.register_units.kurtosis_value_register,
+            )?;
+            dict.set_item(
+                "max_diff_value_register",
+                processed_trace.register_units.max_diff_value_register,
+            )?;
+
+            dict.set_item(
+                "avg_diff_value_register",
+                processed_trace.register_units.avg_diff_value_register,
+            )?;
+            dict.set_item(
+                "median_diff_value_register",
+                processed_trace.register_units.median_diff_value_register,
+            )?;
+
+            dict.set_item(
+                "mad_diff_value_register",
+                processed_trace.register_units.mad_diff_value_register,
             )?;
 
             dict.set_item("address_unit_2", processed_trace.address_unit_2)?;
@@ -522,7 +759,7 @@ pub fn process_trace_for_python<'py>(
 }
 
 #[pymodule]
-fn my_rust_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn modbus_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_trace_for_python, m)?)?;
     m.add_function(wrap_pyfunction!(process_batch_traces, m)?)?;
     Ok(())
@@ -560,9 +797,33 @@ pub fn process_batch_traces<'py>(
     let count_unit_1 = PyList::empty(py);
     let mininum_value_register = PyList::empty(py);
     let maximum_value_register = PyList::empty(py);
+
+    let mean_value_register = PyList::empty(py);
+    let tmean_value_register = PyList::empty(py);
+
     let median_value_register = PyList::empty(py);
+    let std_value_register = PyList::empty(py);
+
     let total_value_register = PyList::empty(py);
     let zeros_count_register = PyList::empty(py);
+
+    let q1_value_register = PyList::empty(py);
+    let q3_value_register = PyList::empty(py);
+    let iqr_value_register = PyList::empty(py);
+    let mad_value_register = PyList::empty(py);
+    let entropy_value_register = PyList::empty(py);
+
+    let mode_value_register = PyList::empty(py);
+    let mode_freq_value_register = PyList::empty(py);
+
+    let skewness_value_register = PyList::empty(py);
+    let kurtosis_value_register = PyList::empty(py);
+
+    let max_diff_value_register = PyList::empty(py);
+    let avg_diff_value_register = PyList::empty(py);
+    let median_diff_value_register = PyList::empty(py);
+    let mad_diff_value_register = PyList::empty(py);
+
     let address_unit_2 = PyList::empty(py);
     let quantity_unit_2 = PyList::empty(py);
     let crc_calculated = PyList::empty(py);
@@ -577,13 +838,36 @@ pub fn process_batch_traces<'py>(
 
         address_unit_1.append(trace.address_unit_1)?;
         quantity_unit_1.append(trace.quantity_unit_1)?;
-        count_unit_1.append(trace.count_unit_1)?; // ¡Línea faltante agregada!
+        count_unit_1.append(trace.count_unit_1)?;
 
         mininum_value_register.append(trace.register_units.mininum_value_register)?;
         maximum_value_register.append(trace.register_units.maximum_value_register)?;
+        mean_value_register.append(trace.register_units.mean_value_register)?;
+        tmean_value_register.append(trace.register_units.tmean_value_register)?;
         median_value_register.append(trace.register_units.median_value_register)?;
+
+        std_value_register.append(trace.register_units.std_value_register)?;
+        // mean_value_register.append(trace.register_units.mean_value_register)?;
+
         total_value_register.append(trace.register_units.total_value_register)?;
         zeros_count_register.append(trace.register_units.zeros_count_register)?;
+
+        q1_value_register.append(trace.register_units.q1_value_register)?;
+        q3_value_register.append(trace.register_units.q3_value_register)?;
+        iqr_value_register.append(trace.register_units.iqr_value_register)?;
+        mad_value_register.append(trace.register_units.mad_value_register)?;
+        entropy_value_register.append(trace.register_units.entropy_value_register)?;
+
+        mode_value_register.append(trace.register_units.mode_value_register)?;
+        mode_freq_value_register.append(trace.register_units.mode_freq_value_register)?;
+
+        skewness_value_register.append(trace.register_units.skewness_value_register)?;
+        kurtosis_value_register.append(trace.register_units.kurtosis_value_register)?;
+
+        max_diff_value_register.append(trace.register_units.max_diff_value_register)?;
+        avg_diff_value_register.append(trace.register_units.avg_diff_value_register)?;
+        median_diff_value_register.append(trace.register_units.median_diff_value_register)?;
+        mad_diff_value_register.append(trace.register_units.mad_diff_value_register)?;
 
         address_unit_2.append(trace.address_unit_2)?;
         quantity_unit_2.append(trace.quantity_unit_2)?;
@@ -599,7 +883,28 @@ pub fn process_batch_traces<'py>(
     dict.set_item("count_unit_1", count_unit_1)?;
     dict.set_item("mininum_value_register", mininum_value_register)?;
     dict.set_item("maximum_value_register", maximum_value_register)?;
+    dict.set_item("tmean_value_register", tmean_value_register)?;
+    dict.set_item("mean_value_register", mean_value_register)?;
     dict.set_item("median_value_register", median_value_register)?;
+    dict.set_item("std_value_register", std_value_register)?;
+
+    dict.set_item("q1_value_register", q1_value_register)?;
+    dict.set_item("q3_value_register", q3_value_register)?;
+    dict.set_item("iqr_value_register", iqr_value_register)?;
+    dict.set_item("mad_value_register", mad_value_register)?;
+    dict.set_item("entropy_value_register", entropy_value_register)?;
+
+    dict.set_item("mode_value_register", mode_value_register)?;
+    dict.set_item("mode_freq_value_register", mode_freq_value_register)?;
+
+    dict.set_item("skewness_value_register", skewness_value_register)?;
+    dict.set_item("kurtosis_value_register", kurtosis_value_register)?;
+
+    dict.set_item("max_diff_value_register", max_diff_value_register)?;
+    dict.set_item("avg_diff_value_register", avg_diff_value_register)?;
+    dict.set_item("median_diff_value_register", median_diff_value_register)?;
+    dict.set_item("mad_diff_value_register", mad_diff_value_register)?;
+
     dict.set_item("total_value_register", total_value_register)?;
     dict.set_item("zeros_count_register", zeros_count_register)?;
     dict.set_item("address_unit_2", address_unit_2)?;

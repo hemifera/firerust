@@ -1,6 +1,12 @@
 firebrust/target/
 
 # Ignore lock files
-.~*
+~$modbus.xlsx
 
 .venv/
+
+jupyter/data/output/
+jupyter/data/results/
+jupyter/old/
+
+**/.ipynb_checkpoints/
