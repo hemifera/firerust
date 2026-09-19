@@ -1,4 +1,5 @@
 firebrust/target/
+temp/
 
 # Ignore lock files
 ~$modbus.xlsx

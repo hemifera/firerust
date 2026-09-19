@@ -10,13 +10,13 @@ debido a la necesidad del funcionamiento de la PYNQ
 
 ## Estado
 
-- Actualizacion de firebrust a version 0.2.0
+- Actualizacion de firebrust a version 0.3.0
 - Libreria modbus de rust esta finalizada. (cuestionable)
 - Librerias llamables por python: se ha utilizado uv y maturin para gestionar los paquetes y se han implementado dos, una para una sola traza y otra para un arreglo de multiples trazas.
 
 ## Jupyter
 
-1. Instalar un ambiente de entorno de python, idealmente usando uv. En la carpeta raiz, firerust/ ejecutar ``uv venv``, luego .``venv/Scrips/activate`` y finalmente ``uv pip install /-r requirements.txt``. Deberia instalar las librerias, maturin, pandas, wheels, jupyter y dependencias.
+1. Instalar un ambiente de entorno de python, idealmente usando uv. En la carpeta raiz, firerust/ ejecutar ``uv venv``, luego .``venv/Scrips/activate`` y finalmente ``uv pip install -r requirements.txt``. Deberia instalar las librerias, maturin, pandas, wheels, jupyter y dependencias.
 2. Para habilitar jupyter lab, ejecuta ``uv run --with jupyter jupyter lab``
 
 ## Exportando libreria a python y PYNQ Z1
@@ -33,3 +33,8 @@ Para exportar la libreria se debe instalar los paquetes necesarios de python, pa
 
 import modbus_parser
 ```
+
+## Más información
+
+Debido a la complejidad del proyecto, se estará documentando más informacion en la carpeta docs.
+

@@ -2,7 +2,7 @@
 // Para el input format ejemplo: 01 07
 // Para el CRC Result: E241, rotar a 0x41 0xEC
 
-use firebrust::{ProcessedTraces, RawTraces, RegisterUnits, get_modbus_function_name};
+use modbus_parser::{ProcessedTraces, RawTraces, RegisterUnits, get_modbus_function_name};
 
 #[test]
 fn read_coils_validation() {
