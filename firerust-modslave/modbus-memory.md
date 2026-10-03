@@ -1,8 +1,9 @@
 # Screen dashboard status
 
-MODO: SLAVE
+MODO: SLAVE (TEXTO A MOSTRAR)
 P30.01 ID: 1
-P01.06 RUNNING FREQ: (+-) 40.6 Hz
+P01.06 
+RUNNING FREQ: (+-) 40.6 Hz
 Rotation direction P00.08 (0 or 1)
 P01.08 SET FREQ: 60.00Hz
 
