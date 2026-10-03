@@ -11,3 +11,10 @@ jupyter/data/results/
 jupyter/old/
 
 **/.ipynb_checkpoints/
+
+# Modbus slave project
+firerust-modslve/.pio
+firerust-modslve/.vscode/.browse.c_cpp.db*
+firerust-modslve/.vscode/c_cpp_properties.json
+firerust-modslve/.vscode/launch.json
+firerust-modslve/.vscode/ipch
