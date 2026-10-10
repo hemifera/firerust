@@ -10,6 +10,8 @@
             "includePath": [
                 "D:/windows/projects/rust/firerust/firerust-modslave/include",
                 "D:/windows/projects/rust/firerust/firerust-modslave/src",
+                "D:/windows/projects/rust/firerust/firerust-modslave/lib/ModbusManager",
+                "D:/windows/projects/rust/firerust/firerust-modslave/lib/DisplayManager",
                 "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit SSD1306",
                 "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit GFX Library",
                 "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit BusIO",
@@ -212,7 +214,6 @@
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/dio_qspi/include",
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/variants/esp32",
-                "D:/windows/projects/rust/firerust/firerust-modslave/lib/DisplayManager",
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                 "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -251,6 +252,8 @@
                 "path": [
                     "D:/windows/projects/rust/firerust/firerust-modslave/include",
                     "D:/windows/projects/rust/firerust/firerust-modslave/src",
+                    "D:/windows/projects/rust/firerust/firerust-modslave/lib/ModbusManager",
+                    "D:/windows/projects/rust/firerust/firerust-modslave/lib/DisplayManager",
                     "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit SSD1306",
                     "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit GFX Library",
                     "D:/windows/projects/rust/firerust/firerust-modslave/.pio/libdeps/esp32dev/Adafruit BusIO",
@@ -453,7 +456,6 @@
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/dio_qspi/include",
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/variants/esp32",
-                    "D:/windows/projects/rust/firerust/firerust-modslave/lib/DisplayManager",
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                     "C:/Users/hrcma/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",

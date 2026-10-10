@@ -13,8 +13,15 @@ jupyter/old/
 **/.ipynb_checkpoints/
 
 # Modbus slave project
-firerust-modslve/.pio
-firerust-modslve/.vscode/.browse.c_cpp.db*
-firerust-modslve/.vscode/c_cpp_properties.json
-firerust-modslve/.vscode/launch.json
-firerust-modslve/.vscode/ipch
+firerust-modsalve/.pio
+firerust-modslave/.vscode/.browse.c_cpp.db*
+firerust-modslave/.vscode/c_cpp_properties.json
+firerust-modslave/.vscode/launch.json
+firerust-modslave/.vscode/ipch
+
+# Modbus master project
+firerust-modmaster/.pio
+firerust-modmaster/.vscode/.browse.c_cpp.db*
+firerust-modmaster/.vscode/c_cpp_properties.json
+firerust-modmaster/.vscode/launch.json
+firerust-modmaster/.vscode/ipch

@@ -4,6 +4,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "DisplayManager.h"
+#include "ModbusManager.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -14,8 +15,15 @@
 
 #define BTN_PAGE 26
 
+const int RX_PIN = 23;
+const int TX_PIN = 22;
+const int EN_PIN = 21;
+const int MODBUS_SPEED = 9600;
+
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 DisplayManager ui(&oled);
+ModbusManager vfdModbus;
+
 // Interfaz de pantalla
 
 // Variables Pág 1
@@ -104,9 +112,11 @@ void setup()
   oled.setTextSize(1);
   oled.setTextColor(SSD1306_WHITE);
   oled.setCursor(0, 0);
-  oled.println(F("VFD Modbus Iniciado"));
+  oled.println(F("Arrancando sistema..."));
   oled.display();
   delay(1000);
+
+  vfdModbus.begin(MODBUS_SPEED, SLAVE_ADDR, RX_PIN, TX_PIN, EN_PIN);
 
   previousMillis = millis();
   lastUpdateTime = millis();
@@ -114,72 +124,138 @@ void setup()
 
 void loop()
 {
-  unsigned long currentMillis = millis();
+  vfdModbus.task();
 
-  // (Nota: Ya no necesitamos revisar el botón aquí, la interrupción lo hace sola de inmediato)
+  uint16_t dirCmd = 1;
 
-  // Lógica de rampa y tiempos del VFD
-  if (currentMillis - previousMillis >= intervalCycle)
-  {
-    previousMillis = currentMillis;
-
-    if (SET_FREQ <= FREQ_MIN)
-    {
-      SET_FREQ = FREQ_MAX;
-      RUNNING_SYMBOL = true;
-      currentStateIndex = 1;
-    }
-    else
-    {
-      SET_FREQ = FREQ_MIN;
-      currentStateIndex = 3;
-    }
-  }
+  vfdModbus.syncFromModbus(SET_FREQ, FREQ_MIN, FREQ_MAX, modbusBaudIndex, dirCmd);
 
   if (SET_FREQ > FREQ_MAX)
     SET_FREQ = FREQ_MAX;
   if (SET_FREQ < FREQ_MIN)
     SET_FREQ = FREQ_MIN;
 
+  int currentDir = RUNNING_SYMBOL ? 1 : -1; // 1: FWD, -1: REV
+  int targetDir = (dirCmd == 2) ? -1 : 1;
+  if (dirCmd == 0)
+    targetDir = 0;
+
+  static enum
+  {
+    NORMAL,
+    DECEL_FOR_REVERSE,
+    ACCEL_NEW_DIR
+  } motorState = NORMAL;
+  float targetMag = SET_FREQ;
+  uint16_t statusValue = 0x0000;
+
+  if (dirCmd == 0)
+  {
+    targetMag = 0.0;
+  }
+
+  switch (motorState)
+  {
+  case NORMAL:
+    if (dirCmd != 0 && targetDir != currentDir && CURRENT_FREQ > 0.0)
+    {
+      // Se pidió cambiar de dirección en marcha -> Iniciar rampa descendente a 0
+      motorState = DECEL_FOR_REVERSE;
+    }
+    else
+    {
+      if (CURRENT_FREQ == 0.0 && (dirCmd == 0 || SET_FREQ == 0.0))
+      {
+        statusValue = 0x0000; // STOPPED
+        currentStateIndex = 0;
+      }
+      else
+      {
+        statusValue = (currentDir == 1) ? 0x0001 : 0x0002;
+        currentStateIndex = (currentDir == 1) ? 1 : 2;
+      }
+    }
+    break;
+
+  case DECEL_FOR_REVERSE:
+    targetMag = 0.0;
+    // Mientras reduce, mantiene el estado del sentido actual en ADDR_STATUS
+    statusValue = (currentDir == 1) ? 0x0001 : 0x0002;
+    currentStateIndex = (currentDir == 1) ? 1 : 2;
+
+    if (CURRENT_FREQ <= 0.01)
+    {
+      CURRENT_FREQ = 0.0;
+      // Al llegar a cero exacto, ADDR_STATUS pasa momentáneamente a 0x0000
+      statusValue = 0x0000;
+      currentStateIndex = 0;
+
+      // Cambiar el sentido de giro y signo en pantalla
+      currentDir = -currentDir;
+      RUNNING_SYMBOL = (currentDir == 1);
+
+      // Pasar a acelerar en el nuevo sentido
+      motorState = ACCEL_NEW_DIR;
+    }
+    break;
+
+  case ACCEL_NEW_DIR:
+    targetMag = SET_FREQ;
+    statusValue = (currentDir == 1) ? 0x0001 : 0x0002;
+    currentStateIndex = (currentDir == 1) ? 1 : 2;
+
+    if (CURRENT_FREQ >= SET_FREQ || SET_FREQ == 0.0 || dirCmd == 0)
+    {
+      motorState = NORMAL;
+    }
+    break;
+  }
+
+  // Lógica de Rampa y Control Físico del Motor
+  unsigned long currentMillis = millis();
   float dt = (currentMillis - lastUpdateTime) / 1000.0;
   lastUpdateTime = currentMillis;
   if (dt > 0.1)
     dt = 0.1;
 
-  if (CURRENT_FREQ < SET_FREQ)
+  if (CURRENT_FREQ < targetMag)
   {
     CURRENT_FREQ += ((FREQ_MAX - FREQ_MIN) / RAMP_TIME) * dt;
-    if (CURRENT_FREQ > SET_FREQ)
-      CURRENT_FREQ = SET_FREQ;
+    if (CURRENT_FREQ > targetMag)
+      CURRENT_FREQ = targetMag;
   }
-  else if (CURRENT_FREQ > SET_FREQ)
+  else if (CURRENT_FREQ > targetMag)
   {
     CURRENT_FREQ -= ((FREQ_MAX - FREQ_MIN) / RAMP_TIME) * dt;
-    if (CURRENT_FREQ < SET_FREQ)
-      CURRENT_FREQ = SET_FREQ;
-  }
-
-  if (CURRENT_FREQ == 0.0 && SET_FREQ == 0.0)
-  {
-    currentStateIndex = 0;
-  }
-  else if (CURRENT_FREQ > 0.0 && currentStateIndex == 3 && CURRENT_FREQ == SET_FREQ)
-  {
-    currentStateIndex = 0;
+    if (CURRENT_FREQ < targetMag)
+      CURRENT_FREQ = targetMag;
   }
 
   // Simulación física de valores eléctricos
-  outVoltage = (CURRENT_FREQ / 60.0) * 225.12;
-  if (CURRENT_FREQ > 0.1)
+  if (statusValue == 0x0000 && CURRENT_FREQ == 0.0)
   {
-    outCurrent = 0.5 + ((CURRENT_FREQ / 60.0) * 2.7);
+    outVoltage = 0.0;
+    outCurrent = 0.0;
   }
   else
   {
-    outCurrent = 0.0;
+    outVoltage = (CURRENT_FREQ / 60.0) * 225.12;
+    if (outVoltage < 15.0)
+      outVoltage = 15.0;
+    if (CURRENT_FREQ > 0.0)
+    {
+      outCurrent = 0.1 + ((CURRENT_FREQ / 60.0) * 3.0);
+    }
+    else
+    {
+      outCurrent = 0.0;
+    }
   }
   if (outCurrent > 3.20)
     outCurrent = 3.20;
+
+  // 6. Actualizar las variables calculadas de nuevo hacia la memoria del Esclavo Modbus
+  vfdModbus.syncToModbus(CURRENT_FREQ, outVoltage, outCurrent, statusValue);
 
   // Actualización visual por medio de la clase modular según la página actual
   switch (currentPage)
